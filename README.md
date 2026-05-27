@@ -2,8 +2,7 @@
 
 MVP web responsivo para familiares que precisam organizar exames médicos de idosos.
 
-O projeto foi iniciado a partir dos documentos de visão, requisitos e arquitetura fornecidos. Como os PDFs tinham informações redundantes/incompletas, a primeira versão prioriza o núcleo comum dos documentos:
-
+O projeto foi iniciado a partir dos documentos de visão, requisitos e arquitetura fornecidos. 
 - cadastro, login, recuperação simulada de senha e logout;
 - consentimento LGPD no cadastro;
 - cadastro e seleção de múltiplos idosos;
