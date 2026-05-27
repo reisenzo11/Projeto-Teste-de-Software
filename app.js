@@ -1,5 +1,6 @@
 const STORAGE_KEY = "examecare.state.v1";
 const SESSION_KEY = "examecare.session.v1";
+const AUDIT_MAX_ENTRIES = 500;
 const EXAM_TYPES = [
   "Hemograma completo",
   "Glicemia",
@@ -60,6 +61,10 @@ function loadSession() {
 }
 
 function saveState() {
+  // Mantém apenas as entradas mais recentes para não estourar o localStorage
+  if (state.audit.length > AUDIT_MAX_ENTRIES) {
+    state.audit = state.audit.slice(-AUDIT_MAX_ENTRIES);
+  }
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
@@ -100,6 +105,106 @@ function formatDate(date) {
   return new Date(`${date}T00:00:00`).toLocaleDateString("pt-BR");
 }
 
+// ─── Validação de CPF ─────────────────────────────────────────────────────────
+
+function cpfDigitsOnly(value) {
+  return String(value).replace(/\D/g, "");
+}
+
+function formatCPF(value) {
+  const d = cpfDigitsOnly(value).slice(0, 11);
+  if (d.length <= 3) return d;
+  if (d.length <= 6) return `${d.slice(0, 3)}.${d.slice(3)}`;
+  if (d.length <= 9) return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`;
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+}
+
+function validateCPF(value) {
+  const d = cpfDigitsOnly(value);
+  if (d.length !== 11) return false;
+  // Rejeita sequências repetidas (000...000, 111...111, etc.)
+  if (/^(\d)\1{10}$/.test(d)) return false;
+
+  const calc = (digits, len) => {
+    const sum = digits
+      .slice(0, len)
+      .reduce((acc, n, i) => acc + n * (len + 1 - i), 0);
+    const rem = (sum * 10) % 11;
+    return rem >= 10 ? 0 : rem;
+  };
+
+  const digits = d.split("").map(Number);
+  return calc(digits, 9) === digits[9] && calc(digits, 10) === digits[10];
+}
+
+// ─── Validação de data de nascimento ─────────────────────────────────────────
+
+const MIN_BIRTH_YEAR = 1900;
+
+function validateBirthDate(dateStr) {
+  if (!dateStr) return { ok: false, message: "Data de nascimento é obrigatória." };
+  const date = new Date(`${dateStr}T00:00:00`);
+  if (isNaN(date.getTime())) return { ok: false, message: "Data de nascimento inválida." };
+  if (date > new Date()) return { ok: false, message: "Data de nascimento não pode ser uma data futura." };
+  if (date.getFullYear() < MIN_BIRTH_YEAR) return { ok: false, message: `Ano de nascimento não pode ser anterior a ${MIN_BIRTH_YEAR}.` };
+  return { ok: true };
+}
+
+// ─── Crypto helpers (PBKDF2 + SHA-256 via Web Crypto API) ────────────────────
+
+async function hashPassword(password) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations: 200_000 },
+    keyMaterial,
+    256
+  );
+  return {
+    hash: bufferToHex(bits),
+    salt: bufferToHex(salt)
+  };
+}
+
+async function verifyPassword(password, storedHash, storedSalt) {
+  const salt = hexToBuffer(storedSalt);
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations: 200_000 },
+    keyMaterial,
+    256
+  );
+  return bufferToHex(bits) === storedHash;
+}
+
+function bufferToHex(buffer) {
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function hexToBuffer(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function getCurrentUser() {
   return state.users.find((user) => user.id === session?.userId) || null;
 }
@@ -130,6 +235,10 @@ function audit(action, examId = null) {
     examId,
     createdAt: new Date().toISOString()
   });
+  // Aviso de diagnóstico no console quando o log estiver chegando ao limite
+  if (state.audit.length > AUDIT_MAX_ENTRIES * 0.9) {
+    console.warn(`[ExameCare] Audit log com ${state.audit.length} entradas — próximo do limite de ${AUDIT_MAX_ENTRIES}. Entradas antigas serão removidas no próximo salvamento.`);
+  }
 }
 
 function toast(message) {
@@ -341,7 +450,7 @@ function patientWorkspaceTemplate(patient) {
     <div class="panel-header">
       <div>
         <h2>${escapeHTML(patient.name)}</h2>
-        <p class="muted">Nascimento: ${formatDate(patient.birthDate)} ${patient.cpf ? `· CPF: ${escapeHTML(patient.cpf)}` : ""}</p>
+        <p class="muted">Nascimento: ${formatDate(patient.birthDate)} ${patient.cpf ? `· CPF: ${escapeHTML(formatCPF(patient.cpf))}` : ""}</p>
       </div>
       <div class="patient-actions">
         <button class="secondary-btn" type="button" data-edit-patient="${patient.id}">Editar</button>
@@ -367,14 +476,28 @@ function patientWorkspaceTemplate(patient) {
   `;
 }
 
+// ─── Regras de negócio de exames ─────────────────────────────────────────────
+// Única fonte de verdade para permissões. Templates e handlers apenas consultam.
+
+function getExamPermissions(exam) {
+  const isScheduled = exam.status === "Agendado";
+  const isFuture    = isFutureDate(exam.date);
+  return {
+    canEdit:     isScheduled && isFuture,
+    canCancel:   isScheduled && isFuture,
+    canComplete: isScheduled,
+    isOverdue:   isScheduled && !isFuture
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function filterButton(filter, label) {
   return `<button type="button" data-filter="${filter}" class="${ui.examFilter === filter ? "active" : ""}" role="tab">${label}</button>`;
 }
 
 function examCardTemplate(exam) {
-  const isEditable = exam.status === "Agendado" && isFutureDate(exam.date);
-  const canCancel = exam.status === "Agendado" && isFutureDate(exam.date);
-  const canComplete = exam.status === "Agendado";
+  const { canEdit, canCancel, canComplete, isOverdue } = getExamPermissions(exam);
   return `
     <article class="exam-card">
       <div class="exam-top">
@@ -391,11 +514,11 @@ function examCardTemplate(exam) {
         <div class="meta-item"><span>Observações</span>${escapeHTML(exam.notes || "Sem observações")}</div>
       </div>
       <div class="exam-actions">
-        <button class="secondary-btn" type="button" data-edit-exam="${exam.id}" ${isEditable ? "" : "disabled"}>Editar</button>
+        <button class="secondary-btn" type="button" data-edit-exam="${exam.id}" ${canEdit ? "" : "disabled"}>Editar</button>
         <button class="secondary-btn" type="button" data-complete-exam="${exam.id}" ${canComplete ? "" : "disabled"}>Realizado</button>
         <button class="danger-btn" type="button" data-cancel-exam="${exam.id}" ${canCancel ? "" : "disabled"}>Cancelar</button>
       </div>
-      ${exam.status === "Agendado" && !isFutureDate(exam.date) ? `<p class="danger-text">Data vencida: confirme a realização para mover ao histórico.</p>` : ""}
+      ${isOverdue ? `<p class="danger-text">Data vencida: confirme a realização para mover ao histórico.</p>` : ""}
     </article>
   `;
 }
@@ -424,6 +547,8 @@ function modalTemplate() {
 
 function patientFormTemplate(modal) {
   const patient = modal.id ? state.patients.find((item) => item.id === modal.id) : {};
+  const todayStr = todayISO();
+  const minBirth = `${MIN_BIRTH_YEAR}-01-01`;
   return `
     <form id="patientForm" class="form-grid">
       <input type="hidden" name="id" value="${patient?.id || ""}" />
@@ -434,11 +559,17 @@ function patientFormTemplate(modal) {
       <div class="two-cols form-grid">
         <div class="field">
           <label for="birthDate">Data de nascimento</label>
-          <input id="birthDate" name="birthDate" type="date" value="${patient?.birthDate || ""}" required />
+          <input id="birthDate" name="birthDate" type="date"
+            min="${minBirth}" max="${todayStr}"
+            value="${patient?.birthDate || ""}" required />
         </div>
         <div class="field">
-          <label for="cpf">CPF</label>
-          <input id="cpf" name="cpf" value="${escapeAttr(patient?.cpf || "")}" />
+          <label for="cpf">CPF <span class="muted" style="font-weight:400">(opcional)</span></label>
+          <input id="cpf" name="cpf"
+            placeholder="000.000.000-00"
+            maxlength="14"
+            inputmode="numeric"
+            value="${escapeAttr(patient?.cpf ? formatCPF(patient.cpf) : "")}" />
         </div>
       </div>
       <button class="primary-btn" type="submit">Salvar idoso</button>
@@ -567,9 +698,20 @@ function bindEvents() {
   document.querySelector("#closeModalBtn")?.addEventListener("click", closeModal);
   document.querySelector("#patientForm")?.addEventListener("submit", handlePatientSave);
   document.querySelector("#examForm")?.addEventListener("submit", handleExamSave);
+
+  // Máscara de CPF em tempo real
+  document.querySelector("#cpf")?.addEventListener("input", (e) => {
+    const pos = e.target.selectionStart;
+    const prev = e.target.value;
+    const masked = formatCPF(prev);
+    e.target.value = masked;
+    // Reposiciona o cursor de forma aproximada após a formatação
+    const diff = masked.length - prev.length;
+    e.target.setSelectionRange(pos + diff, pos + diff);
+  });
 }
 
-function handleRegister(event) {
+async function handleRegister(event) {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.currentTarget));
   const email = data.email.trim().toLowerCase();
@@ -589,26 +731,39 @@ function handleRegister(event) {
     return;
   }
 
-  const user = {
-    id: uid("user"),
-    name: data.name.trim(),
-    email,
-    password: data.password,
-    consentAt: new Date().toISOString(),
-    highContrast: false,
-    failedLogins: 0,
-    lockedUntil: null
-  };
+  const submitBtn = event.currentTarget.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Criando conta…";
 
-  state.users.push(user);
-  session = { userId: user.id };
-  saveState();
-  saveSession();
-  toast("Conta criada com sucesso.");
-  render();
+  try {
+    const { hash, salt } = await hashPassword(data.password);
+    const user = {
+      id: uid("user"),
+      name: data.name.trim(),
+      email,
+      passwordHash: hash,
+      passwordSalt: salt,
+      consentAt: new Date().toISOString(),
+      highContrast: false,
+      failedLogins: 0,
+      lockedUntil: null
+    };
+
+    state.users.push(user);
+    session = { userId: user.id };
+    saveState();
+    saveSession();
+    toast("Conta criada com sucesso.");
+    render();
+  } catch (err) {
+    console.error("Erro ao criar conta:", err);
+    toast("Erro ao criar conta. Tente novamente.");
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Criar conta";
+  }
 }
 
-function handleLogin(event) {
+async function handleLogin(event) {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.currentTarget));
   const email = data.email.trim().toLowerCase();
@@ -619,26 +774,59 @@ function handleLogin(event) {
     return;
   }
 
-  if (!user || user.password !== data.password) {
-    if (user) {
-      user.failedLogins = (user.failedLogins || 0) + 1;
-      if (user.failedLogins >= 5) {
-        user.lockedUntil = Date.now() + 5 * 60 * 1000;
-        user.failedLogins = 0;
-      }
-      saveState();
-    }
-    toast("E-mail ou senha inválidos.");
-    return;
-  }
+  const submitBtn = event.currentTarget.querySelector("button[type=submit]");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Verificando…";
 
-  user.failedLogins = 0;
-  user.lockedUntil = null;
-  session = { userId: user.id };
-  saveState();
-  saveSession();
-  toast("Login realizado.");
-  render();
+  try {
+    let passwordOk = false;
+
+    if (user) {
+      if (user.passwordHash && user.passwordSalt) {
+        // Conta com senha hasheada (PBKDF2)
+        passwordOk = await verifyPassword(data.password, user.passwordHash, user.passwordSalt);
+
+      } else if (user.password) {
+        // Conta legada com senha em texto puro — verifica e migra automaticamente
+        if (user.password === data.password) {
+          passwordOk = true;
+          const { hash, salt } = await hashPassword(data.password);
+          user.passwordHash = hash;
+          user.passwordSalt = salt;
+          delete user.password;
+          saveState();
+        }
+      }
+    }
+
+    if (!passwordOk) {
+      if (user) {
+        user.failedLogins = (user.failedLogins || 0) + 1;
+        if (user.failedLogins >= 5) {
+          user.lockedUntil = Date.now() + 5 * 60 * 1000;
+          user.failedLogins = 0;
+        }
+        saveState();
+      }
+      toast("E-mail ou senha inválidos.");
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Entrar";
+      return;
+    }
+
+    user.failedLogins = 0;
+    user.lockedUntil = null;
+    session = { userId: user.id };
+    saveState();
+    saveSession();
+    toast("Login realizado.");
+    render();
+  } catch (err) {
+    console.error("Erro ao fazer login:", err);
+    toast("Erro ao verificar credenciais. Tente novamente.");
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Entrar";
+  }
 }
 
 function handleRecover(event) {
@@ -686,18 +874,41 @@ function handlePatientSave(event) {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.currentTarget));
   const id = data.id || uid("patient");
+
+  if (!data.name.trim()) {
+    toast("Nome completo é obrigatório.");
+    return;
+  }
+
+  const birthValidation = validateBirthDate(data.birthDate);
+  if (!birthValidation.ok) {
+    toast(birthValidation.message);
+    return;
+  }
+
+  const rawCPF = cpfDigitsOnly(data.cpf);
+  if (rawCPF.length > 0) {
+    if (!validateCPF(rawCPF)) {
+      toast("CPF inválido. Verifique os dígitos informados.");
+      return;
+    }
+    // Verifica duplicidade de CPF entre pacientes do mesmo usuário (exceto o próprio ao editar)
+    const duplicate = state.patients.find(
+      (p) => p.userId === session.userId && cpfDigitsOnly(p.cpf) === rawCPF && p.id !== id
+    );
+    if (duplicate) {
+      toast(`CPF já cadastrado para o idoso "${duplicate.name}".`);
+      return;
+    }
+  }
+
   const payload = {
     id,
     userId: session.userId,
     name: data.name.trim(),
     birthDate: data.birthDate,
-    cpf: data.cpf.trim()
+    cpf: rawCPF  // armazena apenas dígitos internamente
   };
-
-  if (!payload.name || !payload.birthDate) {
-    toast("Nome e data de nascimento são obrigatórios.");
-    return;
-  }
 
   const index = state.patients.findIndex((patient) => patient.id === id);
   if (index >= 0) {
@@ -736,7 +947,7 @@ function handleExamSave(event) {
   const id = data.id || uid("exam");
   const existing = state.exams.find((exam) => exam.id === id);
 
-  if (existing && existing.status !== "Agendado") {
+  if (existing && !getExamPermissions(existing).canEdit) {
     toast("Exames realizados ou cancelados não podem ser editados.");
     return;
   }
@@ -746,6 +957,7 @@ function handleExamSave(event) {
     return;
   }
 
+  // Validação de entrada do formulário (não é permissão sobre exame existente)
   if (!isFutureDate(data.date)) {
     toast("A data do exame deve ser futura.");
     return;
@@ -784,7 +996,7 @@ function handleExamSave(event) {
 
 function cancelExam(id) {
   const exam = state.exams.find((item) => item.id === id);
-  if (!exam || exam.status !== "Agendado" || !isFutureDate(exam.date)) {
+  if (!exam || !getExamPermissions(exam).canCancel) {
     toast("Só é possível cancelar exames agendados com data futura.");
     return;
   }
@@ -800,7 +1012,7 @@ function cancelExam(id) {
 
 function completeExam(id) {
   const exam = state.exams.find((item) => item.id === id);
-  if (!exam || exam.status !== "Agendado") {
+  if (!exam || !getExamPermissions(exam).canComplete) {
     toast("Este exame não pode ser marcado como realizado.");
     return;
   }
