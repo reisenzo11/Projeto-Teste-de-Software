@@ -4,8 +4,6 @@
 **Endpoint base:** `http://localhost:8080/cadastro`  
 **Headers padrão:** `Content-Type: application/json`
 
-> Importante: crie uma Collection no Postman e adicione as requests abaixo. Em cada request, cole o body JSON e adicione os testes (scripts) apresentados.
-
 ---
 
 ## CT01 — Cadastro com sucesso
@@ -117,7 +115,3 @@ pm.test("Mensagem de idade insuficiente", () => {
 ```
 
 ---
-
-## Observações
-- Todos os scripts usam `pm.response.json()` para validar a mensagem retornada.  
-- Você pode exportar a Collection e anexar o arquivo `.json` ao repositório como evidência de implementação.
