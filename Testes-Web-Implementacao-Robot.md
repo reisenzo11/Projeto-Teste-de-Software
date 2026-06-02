@@ -60,5 +60,3 @@ CT05 - Senhas diferentes
     Clicar em Cadastrar
     Validar Mensagem    Senhas diferentes
 ```
-
-*(Os scripts seguem o padrão mostrado nas imagens fornecidas.)*
