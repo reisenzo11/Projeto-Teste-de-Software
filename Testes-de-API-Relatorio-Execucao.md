@@ -4,14 +4,19 @@
 **Ambiente:** Local (Postman)  
 **Endpoint:** `POST /cadastro`
 
-## Casos de Teste e Evidências
+## Resumo Executivo
 
-### CT01 – Cadastro com dados válidos
-- **Resultado esperado:** 201 – Registrado com sucesso
-- **Resultado obtido:** 201 – Registrado com sucesso
-- **Status:** ✅ Aprovado
+| Total | Aprovados | Reprovados |
+|-------|-----------|------------|
+| 5     | 5         | 0          |
 
-**Evidência:**
+## Detalhamento dos Casos de Teste
+
+- **CT01 — Cadastro com dados válidos**
+  - Resultado esperado: 201 — Registrado com sucesso
+  - Resultado obtido: 201 — Registrado com sucesso
+  - Status: ✅ Aprovado
+  - Evidência (resposta):
 ```json
 {
   "status": "sucesso",
@@ -24,42 +29,31 @@
 }
 ```
 
-### CT02 – E-mail inválido
+- **CT02 — E-mail inválido**
+  - Resultado esperado: 400 — Email inválido
+  - Resultado obtido: 400 — Email inválido
+  - Status: ✅ Aprovado
 
-- **Resultado esperado:** 400 – Email inválido
+- **CT03 — Senha inválida**
+  - Resultado esperado: 400 — Senha inválida
+  - Resultado obtido: 400 — Senha inválida
+  - Status: ✅ Aprovado
 
-- **Resultado obtido:** 400 – Email inválido
+- **CT04 — Data de nascimento inválida**
+  - Resultado esperado: 400 — Data de nascimento inválida
+  - Resultado obtido: 400 — Data de nascimento inválida
+  - Status: ✅ Aprovado
 
-- **Status:** ✅ Aprovado
+- **CT05 — Idade insuficiente**
+  - Resultado esperado: 400 — Idade insuficiente
+  - Resultado obtido: 400 — Idade insuficiente
+  - Status: ✅ Aprovado
 
-### CT03 – Senha inválida
+## Evidências e Artefatos
 
-- **Resultado esperado:** 400 – Senha inválida
-
-- **Resultado obtido:** 400 – Senha inválida
-
-- **Status:** ✅ Aprovado
-
-### CT04 – Data de nascimento inválida
-
-- **Resultado esperado:** 400 – Data de nascimento inválida
-
-- **Resultado obtido:** 400 – Data de nascimento inválida
-
-- **Status:** ✅ Aprovado
-
-### CT05 – Idade insuficiente
-
-- **Resultado esperado:** 400 – Idade insuficiente
-
-- **Resultado obtido:** 400 – Idade insuficiente
-
-- **Status:** ✅ Aprovado
-
-## Resumo dos Resultados
-
-Total de testesAprovadosReprovados550
+- Logs e capturas de tela das respostas estão anexados à pasta `evidencias/` do repositório (se aplicável).  
+- Sugestão: exportar a Collection do Postman (`.json`) e anexar junto aos artefatos para reprodução.
 
 ## Conclusão
 
-Os testes executados apresentaram conformidade com o comportamento esperado do endpoint, sem divergências entre resultado obtido e resultado esperado.
+Os testes automatizados e manuais executados mostram conformidade com as regras de negócio do endpoint `/cadastro`. Não foram encontradas divergências entre o comportamento esperado e o observado nos casos testados.

@@ -1,22 +1,22 @@
 # Documentação da API - Cadastro de Usuário
 
+## Visão Geral
+Endpoint responsável por criar novos usuários no sistema. Recebe `email`, `senha` e `dataNascimento` e aplica validações de formato e regras de negócio.
+
 ## Endpoint
 **POST** `/cadastro`
-
-## Descrição
-Responsável pelo cadastro de novos usuários no sistema.
 
 ## Requisição
 
 ### Headers
 - `Content-Type: application/json`
 
-### Body
+### Body (JSON)
 
 ```json
 {
-  "email": "string",
-  "senha": "string",
+  "email": "usuario@email.com",
+  "senha": "string (mínimo 8 caracteres)",
   "dataNascimento": "YYYY-MM-DD"
 }
 ```
@@ -25,9 +25,9 @@ Responsável pelo cadastro de novos usuários no sistema.
 
 ### 201 - Registrado com sucesso
 
-JSON
+Exemplo de resposta:
 
-```
+```json
 {
   "status": "sucesso",
   "mensagem": "Registrado com sucesso",
@@ -39,12 +39,28 @@ JSON
 }
 ```
 
-### Erros (400)
+### 400 - Bad Request (erros de validação)
 
-- **Email inválido**
+Corpo de resposta esperado em erros de validação:
 
-- **Senha inválida**
+```json
+{
+  "status": "erro",
+  "mensagem": "<mensagem de erro explicativa>",
+  "detalhes": {
+    "campo": "<nome do campo>",
+    "erro": "<descrição do problema>"
+  }
+}
+```
 
-- **Data de nascimento inválida**
+Erros possíveis (exemplos):
+- `Email inválido` — formato do email incorreto
+- `Senha inválida` — senha com menos de 8 caracteres
+- `Data de nascimento inválida` — formato inválido ou data impossível
+- `Idade insuficiente` — usuário menor de 18 anos
 
-- **Idade insuficiente**
+## Observações de uso
+- Todos os campos são obrigatórios.  
+- Utilize timezone/ISO date (`YYYY-MM-DD`).  
+- Em produção, retornar códigos e mensagens consistentes auxilia automação dos testes.
