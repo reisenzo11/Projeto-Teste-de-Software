@@ -87,5 +87,3 @@ pm.test("Mensagem de erro de email", () => {
   "dataNascimento": "2012-05-18"
 }
 ```
-
-*(Todos os scripts de teste seguem o mesmo padrão dos casos acima)*
